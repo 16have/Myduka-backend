@@ -9,6 +9,7 @@ venv/
 
 # Environment variables
 .env
+docker-compose.override.yml
 
 # Django
 db.sqlite3
