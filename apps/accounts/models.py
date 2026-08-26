@@ -117,3 +117,35 @@ class Invitation(models.Model):
             self.status = self.Status.EXPIRED
             self.save(update_fields=["status"])
         return self.status
+        return f"{self.username} ({self.role})"
+
+
+class Invitation(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        USED = "used", "Used"
+        EXPIRED = "expired", "Expired"
+
+    email = models.EmailField()
+    token = models.CharField(max_length=255, unique=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    invited_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="invitations_sent",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["email"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.email} ({self.status})"
