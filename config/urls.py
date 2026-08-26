@@ -21,6 +21,6 @@ from .api_views import APIRootView
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', APIRootView.as_view(), name='api-root'),
-    path('api/reports/', include('reports.urls')),
+    path('api/v1/reports/', include('reports.urls')),
     path('api/accounts/', include('apps.accounts.urls')),
 ]
