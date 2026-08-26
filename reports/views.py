@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 
 from .services.report_services import ReportService
 
@@ -8,6 +9,11 @@ from .services.report_services import ReportService
 class InventoryReportView(APIView):
     """
     API view for inventory reports.
+    
+    Query Parameters:
+        - period: 'weekly', 'monthly', or 'annual' (default: 'weekly')
+    """
+    permission_classes = [AllowAny]
     """
 
     def get(self, request):
@@ -29,6 +35,15 @@ class InventoryReportView(APIView):
 class ProductPerformanceView(APIView):
     """
     API view for product performance reports.
+    
+    Query Parameters:
+        - period: 'weekly', 'monthly', or 'annual' (default: 'weekly')
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        Get product performance report showing sales metrics.
     """
 
     def get(self, request):
@@ -50,6 +65,15 @@ class ProductPerformanceView(APIView):
 class StorePerformanceView(APIView):
     """
     API view for store performance reports.
+    
+    Query Parameters:
+        - period: 'weekly', 'monthly', or 'annual' (default: 'weekly')
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        Get store performance report showing sales by store.
     """
 
     def get(self, request):
@@ -71,6 +95,15 @@ class StorePerformanceView(APIView):
 class ClerkPerformanceView(APIView):
     """
     API view for clerk performance reports.
+    
+    Query Parameters:
+        - period: 'weekly', 'monthly', or 'annual' (default: 'weekly')
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        Get clerk performance report showing individual sales metrics.
     """
 
     def get(self, request):

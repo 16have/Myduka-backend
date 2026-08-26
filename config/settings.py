@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     # MyDuka
     "apps.accounts",
     "apps.inventory",
+    "reports",
 ]
 
 MIDDLEWARE = [
