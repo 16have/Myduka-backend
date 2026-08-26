@@ -1,4 +1,6 @@
 from django.urls import path
+from .views import HealthCheckView
 
-# Add accounts endpoints here
-urlpatterns = []
+urlpatterns = [
+    path('health/', HealthCheckView.as_view(), name='health-check'),
+]
