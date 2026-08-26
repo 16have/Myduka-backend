@@ -14,6 +14,7 @@ class InventoryReportView(APIView):
         - period: 'weekly', 'monthly', or 'annual' (default: 'weekly')
     """
     permission_classes = [AllowAny]
+    """
 
     def get(self, request):
         """
@@ -43,6 +44,11 @@ class ProductPerformanceView(APIView):
     def get(self, request):
         """
         Get product performance report showing sales metrics.
+    """
+
+    def get(self, request):
+        """
+        Get product performance report.
         """
         period = request.query_params.get("period", "weekly")
         
@@ -68,6 +74,11 @@ class StorePerformanceView(APIView):
     def get(self, request):
         """
         Get store performance report showing sales by store.
+    """
+
+    def get(self, request):
+        """
+        Get store performance report.
         """
         period = request.query_params.get("period", "weekly")
         
@@ -93,6 +104,11 @@ class ClerkPerformanceView(APIView):
     def get(self, request):
         """
         Get clerk performance report showing individual sales metrics.
+    """
+
+    def get(self, request):
+        """
+        Get clerk performance report.
         """
         period = request.query_params.get("period", "weekly")
         

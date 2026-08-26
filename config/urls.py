@@ -23,4 +23,10 @@ urlpatterns = [
     path('api/', APIRootView.as_view(), name='api-root'),
     path('api/v1/reports/', include('reports.urls')),
     path('api/accounts/', include('apps.accounts.urls')),
+from django.urls import include, path
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('api/auth/', include('apps.accounts.urls')),
+    path('api/', include('apps.inventory.urls')),
 ]

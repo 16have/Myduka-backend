@@ -6,6 +6,8 @@ from django.db.models import Sum, Count, Avg, Q
 
 from apps.inventory.models import Transaction, Product, Store, Clerk
 
+from django.utils import timezone
+
 
 class ReportService:
 
@@ -14,6 +16,7 @@ class ReportService:
         """
         Calculate the start and end date for a report.
         """
+
         today = timezone.now().date()
 
         if period == "weekly":
@@ -24,6 +27,18 @@ class ReportService:
             start_date = today.replace(month=1, day=1)
         else:
             raise ValueError("Invalid reporting period. Use 'weekly', 'monthly', or 'annual'.")
+
+        elif period == "monthly":
+            start_date = today.replace(day=1)
+
+        elif period == "annual":
+            start_date = today.replace(
+                month=1,
+                day=1
+            )
+
+        else:
+            raise ValueError("Invalid reporting period.")
 
         return start_date, today
 
@@ -60,6 +75,12 @@ class ReportService:
                 "purchases_qty": purchases_qty,
                 "price": str(product.price),
             })
+        Inventory report.
+        """
+
+        start_date, end_date = ReportService.get_period_dates(
+            period
+        )
 
         return {
             "report": "inventory",
@@ -68,6 +89,7 @@ class ReportService:
             "end_date": str(end_date),
             "total_products": len(data),
             "data": data,
+            "data": [],
         }
 
     @staticmethod
@@ -114,6 +136,12 @@ class ReportService:
 
         # Sort by total revenue
         data.sort(key=lambda x: float(x["total_revenue"]), reverse=True)
+        Product performance report.
+        """
+
+        start_date, end_date = ReportService.get_period_dates(
+            period
+        )
 
         return {
             "report": "product_performance",
@@ -122,6 +150,7 @@ class ReportService:
             "end_date": str(end_date),
             "total_products": len(data),
             "data": data,
+            "data": [],
         }
 
     @staticmethod
@@ -164,6 +193,12 @@ class ReportService:
 
         # Sort by total sales
         data.sort(key=lambda x: float(x["total_sales"]), reverse=True)
+        Store performance report.
+        """
+
+        start_date, end_date = ReportService.get_period_dates(
+            period
+        )
 
         return {
             "report": "store_performance",
@@ -172,6 +207,7 @@ class ReportService:
             "end_date": str(end_date),
             "total_stores": len(data),
             "data": data,
+            "data": [],
         }
 
     @staticmethod
@@ -209,6 +245,12 @@ class ReportService:
 
         # Sort by total sales
         data.sort(key=lambda x: float(x["total_sales"]), reverse=True)
+        Clerk performance report.
+        """
+
+        start_date, end_date = ReportService.get_period_dates(
+            period
+        )
 
         return {
             "report": "clerk_performance",
@@ -217,4 +259,5 @@ class ReportService:
             "end_date": str(end_date),
             "total_clerks": len(data),
             "data": data,
+            "data": [],
         }

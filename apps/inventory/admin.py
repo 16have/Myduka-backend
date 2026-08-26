@@ -32,3 +32,11 @@ class TransactionAdmin(admin.ModelAdmin):
     list_filter = ['transaction_type', 'store', 'created_at']
     date_hierarchy = 'created_at'
     ordering = ['-created_at']
+
+from .models import Product, Inventory, StockTransaction, SpoilageRecord, SupplyRequest
+
+admin.site.register(Product)
+admin.site.register(Inventory)
+admin.site.register(StockTransaction)
+admin.site.register(SpoilageRecord)
+admin.site.register(SupplyRequest)
