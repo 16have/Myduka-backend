@@ -23,7 +23,13 @@ docker compose up --build
 ```
 
 This starts Postgres (`db`) and the Django dev server (`web`) on
-`http://localhost:8001`, using the settings in `.env`.
+`http://localhost:8001`, using the settings in `.env`. `entrypoint.sh` runs
+`migrate` automatically before the server starts, so a fresh clone is
+usable immediately after `up`.
+
+> If port 8000 or 5432 is already taken on your machine by another project,
+> remap it in `docker-compose.override.yml` (gitignored, machine-local) rather
+> than editing `docker-compose.yml` — see the `db`/`web` entries already there.
 
 ### Option B — Local virtualenv
 
@@ -39,6 +45,45 @@ By default the app connects to Postgres using `DB_NAME` / `DB_USER` /
 `DB_PASSWORD` / `DB_HOST` / `DB_PORT` (matching `docker-compose.yml`). Set
 `DATABASE_URL` instead (e.g. for a managed Postgres instance) and it takes
 priority.
+
+## Deploying to Render
+
+The repo ships a `render.yaml` Blueprint that provisions both the web service
+and a managed Postgres database in one shot:
+
+1. Push this repo to GitHub (Render deploys from a Git remote, not a local
+   clone).
+2. In the Render dashboard: **New → Blueprint**, select the repo. Render reads
+   `render.yaml` and shows two resources to create: `myduka-db` (Postgres) and
+   `myduka-backend` (a Docker-runtime web service built from the `Dockerfile`).
+3. Render will prompt for the one `sync: false` variable declared in the
+   blueprint — `CORS_ALLOWED_ORIGINS` — set it to your deployed frontend's
+   origin(s), comma-separated (e.g. `https://myduka.vercel.app`). Everything
+   else (`SECRET_KEY`, `DEBUG=False`, `DATABASE_URL`) is wired automatically.
+4. Click **Apply**. Render builds the image, starts the container, and
+   `entrypoint.sh` runs `migrate` + `collectstatic` before `gunicorn` binds to
+   the `$PORT` Render assigns — no manual release step needed.
+5. Once live, visit `https://<your-service>.onrender.com/api/docs/` to confirm
+   the API is up, then seed a merchant using the same `manage.py shell`
+   snippet as local dev (see "Seeding a merchant" below) — run it from the
+   Render service's **Shell** tab in the dashboard.
+
+### What the blueprint configures under the hood
+
+`config/settings.py` reads a few env vars specifically for this:
+
+| Variable | Set by | Purpose |
+|---|---|---|
+| `RENDER_EXTERNAL_HOSTNAME` | Render (automatic) | added to `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` |
+| `DATABASE_URL` | blueprint (`fromDatabase`) | points Django at the managed Postgres instance |
+| `SECRET_KEY` | blueprint (`generateValue: true`) | unique per environment, never committed |
+| `DEBUG` | blueprint (`"False"`) | disables debug pages/stack traces in production |
+| `CORS_ALLOWED_ORIGINS` | you, after first deploy | comma-separated list appended to the default dev origins |
+
+`SECURE_PROXY_SSL_HEADER` is set unconditionally so Django correctly detects
+HTTPS behind Render's proxy (needed for CSRF checks on `/admin/`).
+
+
 
 ### Seeding a merchant
 

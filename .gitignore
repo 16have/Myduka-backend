@@ -26,3 +26,6 @@ db.sqlite3
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Static files (collected at deploy/build time)
+staticfiles/
