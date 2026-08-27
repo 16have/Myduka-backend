@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from rest_framework import serializers
 
 from .models import Inventory, Product, SpoilageRecord, StockTransaction, SupplyRequest
@@ -12,6 +10,7 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = [
             "id",
+            "store",
             "name",
             "description",
             "category",
@@ -23,9 +22,12 @@ class ProductSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        read_only_fields = ["store"]
 
 
 class InventorySerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Inventory
         fields = [
@@ -39,8 +41,9 @@ class InventorySerializer(serializers.ModelSerializer):
 
 
 class StockTransactionSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
-    clerk_name = serializers.CharField(source="clerk.get_full_name", read_only=True)
+    clerk_name = serializers.CharField(source="clerk.name", read_only=True)
     total_amount = serializers.SerializerMethodField()
 
     class Meta:
@@ -63,15 +66,17 @@ class StockTransactionSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-    def get_total_amount(self, obj):
-        if obj.buying_price is not None:
-            return float(obj.buying_price) * obj.quantity
+    def get_total_amount(self, obj) -> float | None:
+        price = obj.selling_price if obj.transaction_type == StockTransaction.TransactionType.SOLD else obj.buying_price
+        if price is not None:
+            return float(price) * obj.quantity
         return None
 
 
 class SpoilageRecordSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
-    recorded_by_name = serializers.CharField(source="recorder.get_full_name", read_only=True)
+    recorder_name = serializers.CharField(source="recorder.name", read_only=True)
 
     class Meta:
         model = SpoilageRecord
@@ -82,15 +87,16 @@ class SpoilageRecordSerializer(serializers.ModelSerializer):
             "quantity",
             "reason",
             "notes",
-            "recorded_by",
-            "recorded_by_name",
+            "recorder",
+            "recorder_name",
             "created_at",
         ]
 
 
 class SupplyRequestSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
-    requested_by_name = serializers.CharField(source="requester.get_full_name", read_only=True)
+    requester_name = serializers.CharField(source="requester.name", read_only=True)
 
     class Meta:
         model = SupplyRequest
@@ -98,8 +104,8 @@ class SupplyRequestSerializer(serializers.ModelSerializer):
             "id",
             "product_id",
             "product_name",
-            "requested_by",
-            "requested_by_name",
+            "requester",
+            "requester_name",
             "quantity",
             "reason",
             "notes",
@@ -110,7 +116,78 @@ class SupplyRequestSerializer(serializers.ModelSerializer):
         ]
 
 
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = __import__("apps.accounts.models", fromlist=["User"]).User
-        fields = ["id", "name", "role"]
+class ErrorSerializer(serializers.Serializer):
+    success = serializers.BooleanField(default=False)
+    message = serializers.CharField()
+
+
+class InventoryStatsSerializer(serializers.Serializer):
+    total_products = serializers.IntegerField()
+    total_stock = serializers.IntegerField()
+    low_stock = serializers.IntegerField()
+    out_of_stock = serializers.IntegerField()
+    unpaid_stock = serializers.IntegerField()
+    pending_supply_requests = serializers.IntegerField()
+
+
+class ProductCreateSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    description = serializers.CharField(required=False, allow_blank=True)
+    category = serializers.CharField(required=False, allow_blank=True)
+    buying_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    selling_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    minimum_stock_level = serializers.IntegerField(required=False, default=0)
+
+
+class ReceiveStockRequestSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+    buying_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    selling_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    payment_status = serializers.ChoiceField(choices=["Paid", "Not Paid"])
+    supplier = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class SellStockRequestSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+    payment_status = serializers.ChoiceField(choices=["Paid", "Not Paid"], required=False, default="Paid")
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class StockTransactionResultSerializer(StockTransactionSerializer):
+    new_stock_level = serializers.IntegerField()
+
+    class Meta(StockTransactionSerializer.Meta):
+        fields = StockTransactionSerializer.Meta.fields + ["new_stock_level"]
+
+
+class SpoilageRequestSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+    reason = serializers.ChoiceField(choices=["Broken", "Expired", "Other"])
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class SpoilageRecordResultSerializer(SpoilageRecordSerializer):
+    new_stock_level = serializers.IntegerField()
+
+    class Meta(SpoilageRecordSerializer.Meta):
+        fields = SpoilageRecordSerializer.Meta.fields + ["new_stock_level"]
+
+
+class SupplyRequestCreateSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField()
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class SupplyRequestDecisionSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["Approved", "Declined"])
+    admin_response = serializers.CharField(required=False, allow_blank=True)
+
+
+class PaymentStatusUpdateRequestSerializer(serializers.Serializer):
+    payment_status = serializers.ChoiceField(choices=["Paid", "Not Paid"])

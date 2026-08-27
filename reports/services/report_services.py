@@ -1,22 +1,23 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.db.models import Count, Sum
 from django.utils import timezone
-from django.db.models import Sum, Count, Avg, Q
 
-from apps.inventory.models import Transaction, Product, Store, Clerk
-
-from django.utils import timezone
+from apps.inventory.models import Product, SpoilageRecord, StockTransaction
 
 
 class ReportService:
+    """
+    Reports are computed from apps.inventory.StockTransaction /
+    SpoilageRecord — the models the inventory API actually writes to.
+    """
 
     @staticmethod
     def get_period_dates(period):
         """
         Calculate the start and end date for a report.
         """
-
         today = timezone.now().date()
 
         if period == "weekly":
@@ -28,59 +29,48 @@ class ReportService:
         else:
             raise ValueError("Invalid reporting period. Use 'weekly', 'monthly', or 'annual'.")
 
-        elif period == "monthly":
-            start_date = today.replace(day=1)
-
-        elif period == "annual":
-            start_date = today.replace(
-                month=1,
-                day=1
-            )
-
-        else:
-            raise ValueError("Invalid reporting period.")
-
         return start_date, today
 
     @staticmethod
-    def inventory_report(period):
+    def inventory_report(period, store=None):
         """
         Inventory report - shows product stock levels and movements.
         """
         start_date, end_date = ReportService.get_period_dates(period)
 
         products = Product.objects.all()
-        
+        if store is not None:
+            products = products.filter(store=store)
+
         data = []
         for product in products:
-            transactions = Transaction.objects.filter(
+            transactions = StockTransaction.objects.filter(
                 product=product,
-                created_at__date__range=[start_date, end_date]
+                created_at__date__range=[start_date, end_date],
             )
-            
-            sales_qty = transactions.filter(
-                transaction_type='SALE'
-            ).aggregate(Sum('quantity'))['quantity__sum'] or 0
-            
-            purchases_qty = transactions.filter(
-                transaction_type='PURCHASE'
-            ).aggregate(Sum('quantity'))['quantity__sum'] or 0
-            
+
+            received_qty = transactions.filter(
+                transaction_type=StockTransaction.TransactionType.RECEIVED
+            ).aggregate(Sum("quantity"))["quantity__sum"] or 0
+
+            sold_qty = transactions.filter(
+                transaction_type=StockTransaction.TransactionType.SOLD
+            ).aggregate(Sum("quantity"))["quantity__sum"] or 0
+
+            spoiled_qty = SpoilageRecord.objects.filter(
+                product=product,
+                created_at__date__range=[start_date, end_date],
+            ).aggregate(Sum("quantity"))["quantity__sum"] or 0
+
             data.append({
                 "product_id": product.id,
                 "product_name": product.name,
-                "sku": product.sku,
-                "current_stock": product.quantity_in_stock,
-                "sales_qty": sales_qty,
-                "purchases_qty": purchases_qty,
-                "price": str(product.price),
+                "current_stock": product.current_stock,
+                "received_qty": received_qty,
+                "sold_qty": sold_qty,
+                "spoiled_qty": spoiled_qty,
+                "selling_price": str(product.selling_price),
             })
-        Inventory report.
-        """
-
-        start_date, end_date = ReportService.get_period_dates(
-            period
-        )
 
         return {
             "report": "inventory",
@@ -89,22 +79,22 @@ class ReportService:
             "end_date": str(end_date),
             "total_products": len(data),
             "data": data,
-            "data": [],
         }
 
     @staticmethod
-    def product_performance(period):
+    def product_performance(period, store=None):
         """
         Product performance report - shows sales metrics by product.
         """
         start_date, end_date = ReportService.get_period_dates(period)
 
-        transactions = Transaction.objects.filter(
-            transaction_type='SALE',
-            created_at__date__range=[start_date, end_date]
-        ).select_related('product')
+        transactions = StockTransaction.objects.filter(
+            transaction_type=StockTransaction.TransactionType.SOLD,
+            created_at__date__range=[start_date, end_date],
+        ).select_related("product")
+        if store is not None:
+            transactions = transactions.filter(product__store=store)
 
-        # Aggregate by product
         product_sales = {}
         for transaction in transactions:
             product = transaction.product
@@ -112,21 +102,20 @@ class ReportService:
                 product_sales[product.id] = {
                     "product_id": product.id,
                     "product_name": product.name,
-                    "sku": product.sku,
                     "total_quantity": 0,
-                    "total_revenue": Decimal('0'),
+                    "total_revenue": Decimal("0"),
                     "transaction_count": 0,
                 }
+            revenue = (transaction.selling_price or Decimal("0")) * transaction.quantity
             product_sales[product.id]["total_quantity"] += transaction.quantity
-            product_sales[product.id]["total_revenue"] += transaction.amount
+            product_sales[product.id]["total_revenue"] += revenue
             product_sales[product.id]["transaction_count"] += 1
 
-        # Calculate average and convert to string
         data = []
-        for product_id, sales_data in product_sales.items():
+        for sales_data in product_sales.values():
             avg_transaction = (
                 sales_data["total_revenue"] / sales_data["transaction_count"]
-                if sales_data["transaction_count"] > 0 else 0
+                if sales_data["transaction_count"] > 0 else Decimal("0")
             )
             data.append({
                 **sales_data,
@@ -134,14 +123,7 @@ class ReportService:
                 "avg_transaction_value": str(avg_transaction),
             })
 
-        # Sort by total revenue
         data.sort(key=lambda x: float(x["total_revenue"]), reverse=True)
-        Product performance report.
-        """
-
-        start_date, end_date = ReportService.get_period_dates(
-            period
-        )
 
         return {
             "report": "product_performance",
@@ -150,55 +132,42 @@ class ReportService:
             "end_date": str(end_date),
             "total_products": len(data),
             "data": data,
-            "data": [],
         }
 
     @staticmethod
-    def store_performance(period):
+    def store_performance(period, store=None):
         """
         Store performance report - shows sales metrics by store.
         """
         start_date, end_date = ReportService.get_period_dates(period)
 
-        stores = Store.objects.all()
+        stores = [store] if store is not None else []
         data = []
 
-        for store in stores:
-            transactions = Transaction.objects.filter(
-                store=store,
-                transaction_type='SALE',
-                created_at__date__range=[start_date, end_date]
+        for s in stores:
+            transactions = StockTransaction.objects.filter(
+                product__store=s,
+                transaction_type=StockTransaction.TransactionType.SOLD,
+                created_at__date__range=[start_date, end_date],
             )
 
-            total_sales = transactions.aggregate(Sum('amount'))['amount__sum'] or 0
+            total_sales = sum(
+                (t.selling_price or Decimal("0")) * t.quantity for t in transactions
+            )
             total_transactions = transactions.count()
             avg_transaction = (
-                total_sales / total_transactions if total_transactions > 0 else 0
+                total_sales / total_transactions if total_transactions > 0 else Decimal("0")
             )
-
-            # Clerk performance in this store
-            clerk_sales = transactions.values('clerk').annotate(
-                clerk_count=Count('id')
-            ).count()
+            active_clerks = transactions.values("clerk").distinct().count()
 
             data.append({
-                "store_id": store.id,
-                "store_name": store.name,
-                "location": store.location,
+                "store_id": s.id,
+                "store_name": s.name,
                 "total_sales": str(total_sales),
                 "total_transactions": total_transactions,
                 "avg_transaction_value": str(avg_transaction),
-                "active_clerks": clerk_sales,
+                "active_clerks": active_clerks,
             })
-
-        # Sort by total sales
-        data.sort(key=lambda x: float(x["total_sales"]), reverse=True)
-        Store performance report.
-        """
-
-        start_date, end_date = ReportService.get_period_dates(
-            period
-        )
 
         return {
             "report": "store_performance",
@@ -207,50 +176,49 @@ class ReportService:
             "end_date": str(end_date),
             "total_stores": len(data),
             "data": data,
-            "data": [],
         }
 
     @staticmethod
-    def clerk_performance(period):
+    def clerk_performance(period, store=None):
         """
         Clerk performance report - shows sales metrics by clerk.
         """
         start_date, end_date = ReportService.get_period_dates(period)
 
-        clerks = Clerk.objects.select_related('user', 'store')
+        transactions = StockTransaction.objects.filter(
+            transaction_type=StockTransaction.TransactionType.SOLD,
+            created_at__date__range=[start_date, end_date],
+        ).select_related("clerk")
+        if store is not None:
+            transactions = transactions.filter(product__store=store)
+
+        clerk_sales = {}
+        for transaction in transactions:
+            clerk = transaction.clerk
+            if clerk.id not in clerk_sales:
+                clerk_sales[clerk.id] = {
+                    "clerk_id": clerk.id,
+                    "clerk_name": clerk.name or clerk.email,
+                    "total_sales": Decimal("0"),
+                    "total_transactions": 0,
+                }
+            revenue = (transaction.selling_price or Decimal("0")) * transaction.quantity
+            clerk_sales[clerk.id]["total_sales"] += revenue
+            clerk_sales[clerk.id]["total_transactions"] += 1
+
         data = []
-
-        for clerk in clerks:
-            transactions = Transaction.objects.filter(
-                clerk=clerk,
-                transaction_type='SALE',
-                created_at__date__range=[start_date, end_date]
-            )
-
-            total_sales = transactions.aggregate(Sum('amount'))['amount__sum'] or 0
-            total_transactions = transactions.count()
+        for sales_data in clerk_sales.values():
             avg_transaction = (
-                total_sales / total_transactions if total_transactions > 0 else 0
+                sales_data["total_sales"] / sales_data["total_transactions"]
+                if sales_data["total_transactions"] > 0 else Decimal("0")
             )
-
             data.append({
-                "clerk_id": clerk.id,
-                "clerk_name": clerk.user.get_full_name() or clerk.user.username,
-                "employee_id": clerk.employee_id,
-                "store_name": clerk.store.name,
-                "total_sales": str(total_sales),
-                "total_transactions": total_transactions,
+                **sales_data,
+                "total_sales": str(sales_data["total_sales"]),
                 "avg_transaction_value": str(avg_transaction),
             })
 
-        # Sort by total sales
         data.sort(key=lambda x: float(x["total_sales"]), reverse=True)
-        Clerk performance report.
-        """
-
-        start_date, end_date = ReportService.get_period_dates(
-            period
-        )
 
         return {
             "report": "clerk_performance",
@@ -259,5 +227,4 @@ class ReportService:
             "end_date": str(end_date),
             "total_clerks": len(data),
             "data": data,
-            "data": [],
         }

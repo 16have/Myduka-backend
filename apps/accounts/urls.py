@@ -1,23 +1,20 @@
 from django.urls import path
-from .views import HealthCheckView
-
-urlpatterns = [
-    path('health/', HealthCheckView.as_view(), name='health-check'),
-]
 
 from .views import (
     AdminRegistrationView,
     AdminsView,
+    ClerksView,
+    HealthCheckView,
     InvitationDetailView,
     InvitationsView,
     LoginView,
     LogoutView,
     MeView,
     UserActionView,
-    ClerksView,
 )
 
 urlpatterns = [
+    path('health/', HealthCheckView.as_view(), name='health-check'),
     path("login", LoginView.as_view(), name="login"),
     path("logout", LogoutView.as_view(), name="logout"),
     path("me", MeView.as_view(), name="me"),
