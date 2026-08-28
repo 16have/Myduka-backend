@@ -102,6 +102,17 @@ class AcceptInviteSerializer(serializers.Serializer):
 
         return {"user": user, "store": invite.store}   
 
+class StoreMemberSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source="user.id", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.CharField(source="user.email", read_only=True)
+    is_active = serializers.BooleanField(source="user.is_active", read_only=True)
+    membership_id = serializers.IntegerField(source="id", read_only=True)
+
+    class Meta:
+        model = StoreMembership
+        fields = ["membership_id", "id", "username", "email", "role", "is_active", "is_primary"]
+
 class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -120,22 +131,26 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         attrs[self.username_field] = user.get_username()
         data = super().validate(attrs)
+
+        # Primary store: prefer explicit primary_store, fall back to first membership
+        store_id = None
+        store_name = None
+        if user.primary_store:
+            store_id = user.primary_store.id
+            store_name = user.primary_store.name
+        else:
+            membership = user.store_memberships.select_related("store").first()
+            if membership:
+                store_id = membership.store.id
+                store_name = membership.store.name
+
         data["user"] = {
             "id": user.id,
             "username": user.username,
             "email": user.email,
             "role": user.role,
             "is_active": user.is_active,
+            "store_id": store_id,
+            "store_name": store_name,
         }
         return data
-
-class StoreMemberSerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField(source="user.id", read_only=True)
-    username = serializers.CharField(source="user.username", read_only=True)
-    email = serializers.CharField(source="user.email", read_only=True)
-    is_active = serializers.BooleanField(source="user.is_active", read_only=True)
-    membership_id = serializers.IntegerField(source="id", read_only=True)
-
-    class Meta:
-        model = StoreMembership
-        fields = ["membership_id", "id", "username", "email", "role", "is_active", "is_primary"]
