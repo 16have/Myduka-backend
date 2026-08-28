@@ -115,6 +115,9 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         except User.DoesNotExist:
             raise serializers.ValidationError("No active account found with the given credentials")
 
+        if not user.is_active:
+            raise serializers.ValidationError("This account has been deactivated. Contact your administrator.")
+
         attrs[self.username_field] = user.get_username()
         data = super().validate(attrs)
         data["user"] = {
@@ -124,4 +127,15 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
             "role": user.role,
             "is_active": user.is_active,
         }
-        return data     
+        return data
+
+class StoreMemberSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source="user.id", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.CharField(source="user.email", read_only=True)
+    is_active = serializers.BooleanField(source="user.is_active", read_only=True)
+    membership_id = serializers.IntegerField(source="id", read_only=True)
+
+    class Meta:
+        model = StoreMembership
+        fields = ["membership_id", "id", "username", "email", "role", "is_active", "is_primary"]
