@@ -1,6 +1,8 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-
+import uuid
+from django.utils import timezone
+from datetime import timedelta
 
 class StoreMembership(models.Model):
     class Role(models.TextChoices):
@@ -49,3 +51,43 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} ({self.role})"
+
+class StoreInvite(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        EXPIRED = "expired", "Expired"
+
+    email = models.EmailField()
+    store = models.ForeignKey(
+        "stores.Store",
+        on_delete=models.CASCADE,
+        related_name="invites",
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=[
+            (StoreMembership.Role.ADMIN, "Store Admin"),
+            (StoreMembership.Role.CLERK, "Data Entry Clerk"),
+        ],
+    )
+    invited_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="invites_sent",
+    )
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timedelta(days=7)
+        super().save(*args, **kwargs)
+
+    def is_valid(self):
+        return self.status == self.Status.PENDING and timezone.now() < self.expires_at
+
+    def __str__(self):
+        return f"Invite: {self.email} → {self.store.name} ({self.role})"

@@ -2,6 +2,8 @@ from rest_framework import serializers
 from django.db import transaction
 from .models import User, StoreMembership
 from apps.stores.models import Store
+from .models import StoreInvite
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 
 class MerchantRegistrationSerializer(serializers.Serializer):
@@ -53,3 +55,73 @@ class MerchantRegistrationSerializer(serializers.Serializer):
             user.save()
 
         return {"user": user, "store": store}
+    
+class CreateInviteSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    store_id = serializers.IntegerField()
+    role = serializers.ChoiceField(choices=[StoreMembership.Role.ADMIN, StoreMembership.Role.CLERK])
+
+
+class AcceptInviteSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("This username is already taken.")
+        return value
+
+    def validate_token(self, value):
+        try:
+            invite = StoreInvite.objects.get(token=value)
+        except StoreInvite.DoesNotExist:
+            raise serializers.ValidationError("Invalid invite token.")
+        if not invite.is_valid():
+            raise serializers.ValidationError("This invite has expired or was already used.")
+        self.invite = invite
+        return value
+
+    def create(self, validated_data):
+        invite = self.invite
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=validated_data["username"],
+                email=invite.email,
+                password=validated_data["password"],
+                role=invite.role,
+            )
+            StoreMembership.objects.create(
+                user=user,
+                store=invite.store,
+                role=invite.role,
+                is_primary=True,
+            )
+            invite.status = StoreInvite.Status.ACCEPTED
+            invite.save()
+
+        return {"user": user, "store": invite.store}   
+
+class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["email"] = serializers.EmailField()
+        self.fields.pop(self.username_field, None)
+
+    def validate(self, attrs):
+        email = attrs.get("email")
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("No active account found with the given credentials")
+
+        attrs[self.username_field] = user.get_username()
+        data = super().validate(attrs)
+        data["user"] = {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active,
+        }
+        return data     
