@@ -7,6 +7,8 @@ urlpatterns = [
     path("api/accounts/", include("apps.accounts.urls")),
     path("api/", include("apps.stores.urls")),
     path("api/", include("apps.inventory.urls")),
+    path("api/", include("apps.supply_requests.urls")),
+    path("api/", include("apps.payments.urls")),
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 ]
