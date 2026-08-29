@@ -49,3 +49,29 @@ class StockSummaryReportView(views.APIView):
         )
 
         return Response({"stores": list(summary)})
+
+class DashboardSummaryReportView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        store_ids = _member_store_ids(request.user)
+        products = Product.objects.filter(store_id__in=store_ids)
+
+        total_products = products.count()
+        total_stock = products.aggregate(total=Sum("quantity"))["total"] or 0
+        low_stock = sum(1 for p in products if p.stock_status == Product.StockStatus.LOW_STOCK)
+        out_of_stock = sum(1 for p in products if p.stock_status == Product.StockStatus.OUT_OF_STOCK)
+
+        from apps.supply_requests.models import SupplyRequest
+        pending_supply_requests = SupplyRequest.objects.filter(
+            product__store_id__in=store_ids,
+            status=SupplyRequest.Status.PENDING,
+        ).count()
+
+        return Response({
+            "total_products": total_products,
+            "total_stock": total_stock,
+            "low_stock": low_stock,
+            "out_of_stock": out_of_stock,
+            "pending_supply_requests": pending_supply_requests,
+        })

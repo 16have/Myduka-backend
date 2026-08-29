@@ -3,6 +3,11 @@ from django.conf import settings
 
 
 class Product(models.Model):
+    class StockStatus(models.TextChoices):
+        IN_STOCK = "in_stock", "In Stock"
+        LOW_STOCK = "low_stock", "Low Stock"
+        OUT_OF_STOCK = "out_of_stock", "Out of Stock"
+
     store = models.ForeignKey(
         "stores.Store",
         on_delete=models.CASCADE,
@@ -10,8 +15,12 @@ class Product(models.Model):
     )
     name = models.CharField(max_length=200)
     sku = models.CharField(max_length=50, blank=True)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    category = models.CharField(max_length=100, blank=True)
+
+    buying_price = models.DecimalField(max_digits=10, decimal_places=2)
+    selling_price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.PositiveIntegerField(default=0)
+    low_stock_threshold = models.PositiveIntegerField(default=10)
 
     supplier_name = models.CharField(max_length=200, blank=True)
     supplier_contact = models.CharField(max_length=50, blank=True)
@@ -23,6 +32,18 @@ class Product(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["store", "sku"], name="unique_store_sku"),
         ]
+
+    @property
+    def stock_status(self):
+        if self.quantity == 0:
+            return self.StockStatus.OUT_OF_STOCK
+        if self.quantity <= self.low_stock_threshold:
+            return self.StockStatus.LOW_STOCK
+        return self.StockStatus.IN_STOCK
+
+    @property
+    def margin(self):
+        return self.selling_price - self.buying_price
 
     def __str__(self):
         return f"{self.name} ({self.store.name})"
