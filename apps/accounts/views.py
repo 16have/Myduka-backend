@@ -1,7 +1,7 @@
 from django.shortcuts import render
 
 # Create your views here.
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, status, views
 from rest_framework.response import Response
 from .serializers import MerchantRegistrationSerializer
 from django.core.mail import send_mail
@@ -16,7 +16,12 @@ from rest_framework import viewsets
 from .models import StoreMembership
 from .serializers import StoreMemberSerializer
 from apps.stores.models import Store
-
+from rest_framework.exceptions import NotFound
+from .models import StoreInvite
+from rest_framework.throttling import AnonRateThrottle
+from django.core.mail import send_mail
+from .models import PasswordResetToken
+from .serializers import RequestPasswordResetSerializer, ConfirmPasswordResetSerializer
 
 class MerchantRegistrationView(generics.GenericAPIView):
     serializer_class = MerchantRegistrationSerializer
@@ -232,3 +237,81 @@ class PendingInvitesView(generics.ListAPIView):
             for inv in qs
         ]
         return Response(data)
+
+class ValidateInviteView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get("token")
+        if not token:
+            return Response({"detail": "Missing token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            invite = StoreInvite.objects.get(token=token)
+        except StoreInvite.DoesNotExist:
+            raise NotFound("This invitation link is invalid.")
+
+        if invite.status != StoreInvite.Status.PENDING:
+            return Response(
+                {"detail": "This invitation has already been used."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not invite.is_valid():
+            return Response(
+                {"detail": "This invitation has expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            "email": invite.email,
+            "role": invite.role,
+            "store": invite.store.name,
+        })
+
+class LoginRateThrottle(AnonRateThrottle):
+    scope = "login"
+
+
+class EmailTokenObtainPairView(TokenObtainPairView):
+    serializer_class = EmailTokenObtainPairSerializer
+    throttle_classes = [LoginRateThrottle]
+
+class RequestPasswordResetView(generics.GenericAPIView):
+    serializer_class = RequestPasswordResetSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+
+        # Always return success, even if the email doesn't exist —
+        # prevents leaking which emails are registered (standard security practice)
+        try:
+            user = User.objects.get(email=email)
+            reset_token = PasswordResetToken.objects.create(user=user)
+            reset_link = f"http://localhost:5173/reset-password?token={reset_token.token}"
+            send_mail(
+                subject="Reset your MyDuka password",
+                message=f"Click the link to reset your password: {reset_link}\n\nThis link expires in 1 hour.",
+                from_email=None,
+                recipient_list=[email],
+            )
+        except User.DoesNotExist:
+            pass
+
+        return Response(
+            {"detail": "If an account with that email exists, a reset link has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ConfirmPasswordResetView(generics.GenericAPIView):
+    serializer_class = ConfirmPasswordResetSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({"detail": "Password reset successful. You can now log in."})

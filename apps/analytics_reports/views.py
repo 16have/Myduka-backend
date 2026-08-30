@@ -43,7 +43,7 @@ class StockSummaryReportView(views.APIView):
             .annotate(
                 total_products=Count("id"),
                 total_units=Sum("quantity"),
-                total_value=Sum(F("quantity") * F("price")),
+                total_value=Sum(F("quantity") * F("selling_price")),
             )
             .order_by("store__name")
         )

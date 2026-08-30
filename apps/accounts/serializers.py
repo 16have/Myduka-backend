@@ -4,6 +4,7 @@ from .models import User, StoreMembership
 from apps.stores.models import Store
 from .models import StoreInvite
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .models import PasswordResetToken
 
 
 class MerchantRegistrationSerializer(serializers.Serializer):
@@ -154,3 +155,30 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
             "store_name": store_name,
         }
         return data
+
+class RequestPasswordResetSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class ConfirmPasswordResetSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_token(self, value):
+        try:
+            reset_token = PasswordResetToken.objects.get(token=value)
+        except PasswordResetToken.DoesNotExist:
+            raise serializers.ValidationError("Invalid reset token.")
+        if not reset_token.is_valid():
+            raise serializers.ValidationError("This reset link has expired or was already used.")
+        self.reset_token = reset_token
+        return value
+
+    def save(self):
+        reset_token = self.reset_token
+        user = reset_token.user
+        user.set_password(self.validated_data["new_password"])
+        user.save()
+        reset_token.used = True
+        reset_token.save()
+        return user

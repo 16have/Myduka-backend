@@ -91,3 +91,18 @@ class StoreInvite(models.Model):
 
     def __str__(self):
         return f"Invite: {self.email} → {self.store.name} ({self.role})"
+
+class PasswordResetToken(models.Model):
+    user = models.ForeignKey(
+        "accounts.User", on_delete=models.CASCADE, related_name="password_reset_tokens"
+    )
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used = models.BooleanField(default=False)
+
+    def is_valid(self):
+        expiry = self.created_at + timedelta(hours=1)
+        return not self.used and timezone.now() < expiry
+
+    def __str__(self):
+        return f"Reset token for {self.user.username}"
