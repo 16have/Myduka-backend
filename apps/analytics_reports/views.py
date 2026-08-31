@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from django.db.models import Sum, F, Count
 from apps.inventory.models import Product
 from apps.accounts.models import StoreMembership
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 
 def _member_store_ids(user):
@@ -14,6 +15,10 @@ def _member_store_ids(user):
 
 class LowStockReportView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
+    @extend_schema(
+        parameters=[OpenApiParameter("threshold", OpenApiTypes.INT, OpenApiParameter.QUERY)],
+        responses={200: dict},
+    )
 
     def get(self, request):
         threshold = int(request.query_params.get("threshold", 10))
@@ -33,6 +38,9 @@ class LowStockReportView(views.APIView):
 
 class StockSummaryReportView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
+    @extend_schema(
+        responses={200: dict},
+    )
 
     def get(self, request):
         store_ids = _member_store_ids(request.user)
@@ -52,6 +60,9 @@ class StockSummaryReportView(views.APIView):
 
 class DashboardSummaryReportView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
+    @extend_schema(
+        responses={200: dict},
+    )
 
     def get(self, request):
         store_ids = _member_store_ids(request.user)

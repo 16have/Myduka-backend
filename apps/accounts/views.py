@@ -22,6 +22,7 @@ from rest_framework.throttling import AnonRateThrottle
 from django.core.mail import send_mail
 from .models import PasswordResetToken
 from .serializers import RequestPasswordResetSerializer, ConfirmPasswordResetSerializer
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 class MerchantRegistrationView(generics.GenericAPIView):
     serializer_class = MerchantRegistrationSerializer
@@ -132,6 +133,8 @@ class StoreMemberViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = StoreMemberSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: StoreMemberSerializer})
+
     def get_queryset(self):
         # Only stores where the requester is owner/admin
         managed_store_ids = StoreMembership.objects.filter(
@@ -187,6 +190,9 @@ class RemoveMemberView(generics.GenericAPIView):
     since they may belong to other stores).
     """
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = None
+
+    @extend_schema(responses={204: None})
 
     def delete(self, request, membership_id):
         try:
@@ -212,6 +218,12 @@ class PendingInvitesView(generics.ListAPIView):
     GET /api/accounts/invites/pending/?store_id=2
     """
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = None  # response is a manually-built list, not a serializer
+
+    @extend_schema(
+        parameters=[OpenApiParameter("store_id", OpenApiTypes.INT, OpenApiParameter.QUERY)],
+        responses={200: dict},
+    )
 
     def list(self, request):
         managed_store_ids = StoreMembership.objects.filter(
@@ -240,6 +252,10 @@ class PendingInvitesView(generics.ListAPIView):
 
 class ValidateInviteView(views.APIView):
     permission_classes = [permissions.AllowAny]
+    @extend_schema(
+        parameters=[OpenApiParameter("token", OpenApiTypes.UUID, OpenApiParameter.QUERY)],
+        responses={200: dict},
+    )
 
     def get(self, request):
         token = request.query_params.get("token")
