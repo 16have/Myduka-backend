@@ -4,10 +4,11 @@ from django.conf import settings
 
 class SupplyRequest(models.Model):
     class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
-        APPROVED = "approved", "Approved"
-        REJECTED = "rejected", "Rejected"
-        FULFILLED = "fulfilled", "Fulfilled"
+        PENDING = "Pending", "Pending"
+        APPROVED = "Approved", "Approved"
+        DECLINED = "Declined", "Declined"
+        ORDERED = "Ordered", "Ordered"
+        RECEIVED = "Received", "Received"
 
     product = models.ForeignKey(
         "inventory.Product",
@@ -27,8 +28,10 @@ class SupplyRequest(models.Model):
         related_name="supply_requests_reviewed",
     )
     quantity_requested = models.PositiveIntegerField()
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    reason = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
+    admin_response = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

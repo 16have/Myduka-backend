@@ -1,9 +1,4 @@
-from django.shortcuts import render
-
-# Create your views here.
-from rest_framework import viewsets, permissions, status as http_status
-from rest_framework.decorators import action
-from rest_framework.response import Response
+from rest_framework import viewsets, permissions
 from rest_framework.exceptions import PermissionDenied
 from .models import SupplyRequest
 from .serializers import SupplyRequestSerializer
@@ -27,44 +22,24 @@ class SupplyRequestViewSet(viewsets.ModelViewSet):
         ).exists()
         if not is_member:
             raise PermissionDenied("You are not a member of this product's store.")
-        serializer.save(requested_by=self.request.user)
+        serializer.save(requested_by=self.request.user, status=SupplyRequest.Status.PENDING)
 
-    def _check_admin_or_owner(self, request, supply_request):
+    def perform_update(self, serializer):
+        supply_request = self.get_object()
         membership = StoreMembership.objects.filter(
-            user=request.user, store=supply_request.product.store
+            user=self.request.user, store=supply_request.product.store
         ).first()
         if not membership or membership.role not in ("owner", "admin"):
-            raise PermissionDenied("Only store admins/owners can review supply requests.")
+            raise PermissionDenied("Only store admins/owners can update supply requests.")
 
-    @action(detail=True, methods=["post"])
-    def approve(self, request, pk=None):
-        supply_request = self.get_object()
-        self._check_admin_or_owner(request, supply_request)
-        supply_request.status = SupplyRequest.Status.APPROVED
-        supply_request.reviewed_by = request.user
-        supply_request.save()
-        return Response(SupplyRequestSerializer(supply_request).data)
+        old_status = supply_request.status
+        new_status = serializer.validated_data.get("status", old_status)
 
-    @action(detail=True, methods=["post"])
-    def reject(self, request, pk=None):
-        supply_request = self.get_object()
-        self._check_admin_or_owner(request, supply_request)
-        supply_request.status = SupplyRequest.Status.REJECTED
-        supply_request.reviewed_by = request.user
-        supply_request.save()
-        return Response(SupplyRequestSerializer(supply_request).data)
+        # If the status is being moved into a decided/received state and quantity increases stock,
+        # only adjust stock the moment it actually transitions INTO "Received" for the first time.
+        instance = serializer.save(reviewed_by=self.request.user)
 
-    @action(detail=True, methods=["post"])
-    def fulfill(self, request, pk=None):
-        supply_request = self.get_object()
-        self._check_admin_or_owner(request, supply_request)
-        if supply_request.status != SupplyRequest.Status.APPROVED:
-            return Response(
-                {"detail": "Only approved requests can be fulfilled."},
-                status=http_status.HTTP_400_BAD_REQUEST,
-            )
-        supply_request.status = SupplyRequest.Status.FULFILLED
-        supply_request.product.quantity += supply_request.quantity_requested
-        supply_request.product.save()
-        supply_request.save()
-        return Response(SupplyRequestSerializer(supply_request).data)
+        if old_status != SupplyRequest.Status.RECEIVED and new_status == SupplyRequest.Status.RECEIVED:
+            product = instance.product
+            product.quantity += instance.quantity_requested
+            product.save()

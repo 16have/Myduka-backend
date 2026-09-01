@@ -1,25 +1,12 @@
 from django.test import TestCase
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from rest_framework import status
 from apps.accounts.models import User, StoreMembership
 from apps.stores.models import Store
 from apps.inventory.models import Product
 from apps.supply_requests.models import SupplyRequest
-from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
-from rest_framework import status
-from django.core.cache import cache
 
-@override_settings(
-    REST_FRAMEWORK={
-        "DEFAULT_AUTHENTICATION_CLASSES": (
-            "rest_framework_simplejwt.authentication.JWTAuthentication",
-        ),
-        "DEFAULT_PERMISSION_CLASSES": (
-            "rest_framework.permissions.IsAuthenticated",
-        ),
-    }
-)
 
 class SupplyRequestWorkflowTests(TestCase):
     def setUp(self):
@@ -50,67 +37,72 @@ class SupplyRequestWorkflowTests(TestCase):
     def test_clerk_can_create_supply_request(self):
         self._login("clerk@example.com", "Pass12345")
         response = self.client.post("/api/supply-requests/", {
-            "product": self.product.id, "quantity_requested": 20,
+            "product": self.product.id, "quantity": 20, "reason": "Running low",
         })
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["status"], "pending")
+        self.assertEqual(response.data["status"], "Pending")
 
-    def test_clerk_cannot_approve_own_request(self):
+    def test_clerk_cannot_update_status(self):
         self._login("clerk@example.com", "Pass12345")
         create_response = self.client.post("/api/supply-requests/", {
-            "product": self.product.id, "quantity_requested": 20,
+            "product": self.product.id, "quantity": 20, "reason": "Running low",
         })
         request_id = create_response.data["id"]
 
-        approve_response = self.client.post(f"/api/supply-requests/{request_id}/approve/")
-        self.assertEqual(approve_response.status_code, status.HTTP_403_FORBIDDEN)
+        update_response = self.client.patch(f"/api/supply-requests/{request_id}/", {"status": "Approved"})
+        self.assertEqual(update_response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_full_workflow_increases_stock_correctly(self):
+    def test_full_workflow_increases_stock_on_received(self):
         self._login("clerk@example.com", "Pass12345")
         create_response = self.client.post("/api/supply-requests/", {
-            "product": self.product.id, "quantity_requested": 20,
+            "product": self.product.id, "quantity": 20, "reason": "Running low",
         })
         request_id = create_response.data["id"]
 
-        # Switch to owner for approve + fulfill
         self._login("owner@example.com", "Pass12345")
 
-        approve_response = self.client.post(f"/api/supply-requests/{request_id}/approve/")
+        approve_response = self.client.patch(f"/api/supply-requests/{request_id}/", {"status": "Approved"})
         self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(approve_response.data["status"], "approved")
 
-        fulfill_response = self.client.post(f"/api/supply-requests/{request_id}/fulfill/")
-        self.assertEqual(fulfill_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(fulfill_response.data["status"], "fulfilled")
+        ordered_response = self.client.patch(f"/api/supply-requests/{request_id}/", {"status": "Ordered"})
+        self.assertEqual(ordered_response.status_code, status.HTTP_200_OK)
 
         self.product.refresh_from_db()
-        self.assertEqual(self.product.quantity, 70)  # 50 + 20
+        self.assertEqual(self.product.quantity, 50)  # no change yet — not Received
 
-    def test_cannot_fulfill_before_approval(self):
+        received_response = self.client.patch(f"/api/supply-requests/{request_id}/", {"status": "Received"})
+        self.assertEqual(received_response.status_code, status.HTTP_200_OK)
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 70)  # 50 + 20, only now
+
+    def test_editing_received_request_does_not_double_increment_stock(self):
         self._login("clerk@example.com", "Pass12345")
         create_response = self.client.post("/api/supply-requests/", {
-            "product": self.product.id, "quantity_requested": 20,
+            "product": self.product.id, "quantity": 20, "reason": "Running low",
         })
         request_id = create_response.data["id"]
 
         self._login("owner@example.com", "Pass12345")
-        fulfill_response = self.client.post(f"/api/supply-requests/{request_id}/fulfill/")
-        self.assertEqual(fulfill_response.status_code, status.HTTP_400_BAD_REQUEST)
-
+        self.client.patch(f"/api/supply-requests/{request_id}/", {"status": "Received"})
         self.product.refresh_from_db()
-        self.assertEqual(self.product.quantity, 50)  # unchanged
+        self.assertEqual(self.product.quantity, 70)
 
-    def test_rejected_request_does_not_change_stock(self):
+        # Edit admin_response on the already-Received request
+        self.client.patch(f"/api/supply-requests/{request_id}/", {"admin_response": "Delivered on time"})
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 70)  # unchanged — no double-increment
+
+    def test_declined_request_does_not_change_stock(self):
         self._login("clerk@example.com", "Pass12345")
         create_response = self.client.post("/api/supply-requests/", {
-            "product": self.product.id, "quantity_requested": 20,
+            "product": self.product.id, "quantity": 20, "reason": "Running low",
         })
         request_id = create_response.data["id"]
 
         self._login("owner@example.com", "Pass12345")
-        reject_response = self.client.post(f"/api/supply-requests/{request_id}/reject/")
-        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(reject_response.data["status"], "rejected")
+        decline_response = self.client.patch(f"/api/supply-requests/{request_id}/", {"status": "Declined"})
+        self.assertEqual(decline_response.status_code, status.HTTP_200_OK)
 
         self.product.refresh_from_db()
-        self.assertEqual(self.product.quantity, 50)  # unchanged
+        self.assertEqual(self.product.quantity, 50)
