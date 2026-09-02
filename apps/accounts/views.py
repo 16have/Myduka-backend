@@ -23,6 +23,7 @@ from django.core.mail import send_mail
 from .models import PasswordResetToken
 from .serializers import RequestPasswordResetSerializer, ConfirmPasswordResetSerializer
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from .models import User
 
 class MerchantRegistrationView(generics.GenericAPIView):
     serializer_class = MerchantRegistrationSerializer
