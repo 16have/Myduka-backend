@@ -24,6 +24,7 @@ from .models import PasswordResetToken
 from .serializers import RequestPasswordResetSerializer, ConfirmPasswordResetSerializer
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from .models import User
+from django.core.exceptions import ValidationError
 
 class MerchantRegistrationView(generics.GenericAPIView):
     serializer_class = MerchantRegistrationSerializer
@@ -265,9 +266,9 @@ class ValidateInviteView(views.APIView):
 
         try:
             invite = StoreInvite.objects.get(token=token)
-        except StoreInvite.DoesNotExist:
+        except (StoreInvite.DoesNotExist, ValidationError, ValueError):
             raise NotFound("This invitation link is invalid.")
-
+        
         if invite.status != StoreInvite.Status.PENDING:
             return Response(
                 {"detail": "This invitation has already been used."},
