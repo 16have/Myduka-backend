@@ -25,6 +25,7 @@ from .serializers import RequestPasswordResetSerializer, ConfirmPasswordResetSer
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from .models import User
 from django.core.exceptions import ValidationError
+from django.conf import settings
 
 class MerchantRegistrationView(generics.GenericAPIView):
     serializer_class = MerchantRegistrationSerializer
@@ -78,7 +79,7 @@ class CreateInviteView(generics.GenericAPIView):
             invited_by=request.user,
         )
 
-        invite_link = f"http://localhost:5173/accept-invite?token={invite.token}"
+        invite_link = f"{settings.FRONTEND_URL}/accept-invite?token={invite.token}"
         send_mail(
             subject=f"You've been invited to join {store.name} on MyDuka",
             message=(
@@ -308,7 +309,7 @@ class RequestPasswordResetView(generics.GenericAPIView):
         try:
             user = User.objects.get(email=email)
             reset_token = PasswordResetToken.objects.create(user=user)
-            reset_link = f"http://localhost:5173/reset-password?token={reset_token.token}"
+            reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
             send_mail(
                 subject="Reset your MyDuka password",
                 message=f"Click the link to reset your password: {reset_link}\n\nThis link expires in 1 hour.",

@@ -149,3 +149,5 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@myduka.local")
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
