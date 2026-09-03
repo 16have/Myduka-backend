@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    MerchantRegistrationView, CreateInviteView, AcceptInviteView,
+    MerchantRegistrationView, CreateInviteView, AcceptInviteView, DeleteInviteView,
     StoreMemberViewSet, ToggleMemberActiveView, RemoveMemberView, PendingInvitesView,ValidateInviteView,
     RequestPasswordResetView, ConfirmPasswordResetView
 )
@@ -13,6 +13,7 @@ urlpatterns = [
     path("invites/", CreateInviteView.as_view(), name="create-invite"),
     path("invites/validate/", ValidateInviteView.as_view(), name="validate-invite"),
     path("invites/accept/", AcceptInviteView.as_view(), name="accept-invite"),
+    path("invites/<int:invite_id>/", DeleteInviteView.as_view(), name="delete-invite"),
     path("invites/pending/", PendingInvitesView.as_view(), name="pending-invites"),
     path("members/", member_list, name="member-list"),
     path("members/<int:membership_id>/toggle-active/", ToggleMemberActiveView.as_view(), name="toggle-member-active"),

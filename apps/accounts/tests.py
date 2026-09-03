@@ -1,8 +1,11 @@
+from datetime import timedelta
+
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
-from apps.accounts.models import User, StoreMembership
+from apps.accounts.models import User, StoreMembership, StoreInvite
 from apps.stores.models import Store
 from django.core.cache import cache
 
@@ -79,3 +82,45 @@ class MerchantRegistrationTests(TestCase):
             "password": "SecurePass123", "store_name": "Another Duka",
         })
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class InviteTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.merchant = User.objects.create_user(
+            username="merchant", email="merchant@example.com",
+            password="TestPass123", role=User.Role.MERCHANT,
+        )
+        self.store = Store.objects.create(name="Test Store", location="Nairobi")
+        StoreMembership.objects.create(
+            user=self.merchant,
+            store=self.store,
+            role=StoreMembership.Role.OWNER,
+            is_primary=True,
+        )
+        self.client.force_authenticate(user=self.merchant)
+
+    def test_create_invite_accepts_expires_in_hours(self):
+        response = self.client.post("/api/accounts/invites/", {
+            "email": "newadmin@example.com",
+            "store_id": self.store.id,
+            "role": StoreMembership.Role.ADMIN,
+            "expires_in_hours": 1,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("expires_at", response.data)
+
+    def test_delete_invite_requires_admin_or_owner(self):
+        invite = StoreInvite.objects.create(
+            email="clerk@example.com",
+            store=self.store,
+            role=StoreMembership.Role.CLERK,
+            invited_by=self.merchant,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        response = self.client.delete(f"/api/accounts/invites/{invite.id}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(StoreInvite.objects.filter(id=invite.id).exists())

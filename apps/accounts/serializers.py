@@ -61,6 +61,7 @@ class CreateInviteSerializer(serializers.Serializer):
     email = serializers.EmailField()
     store_id = serializers.IntegerField()
     role = serializers.ChoiceField(choices=[StoreMembership.Role.ADMIN, StoreMembership.Role.CLERK])
+    expires_in_hours = serializers.IntegerField(min_value=1, required=False, default=1)
 
 
 class AcceptInviteSerializer(serializers.Serializer):

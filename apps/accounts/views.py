@@ -1,5 +1,7 @@
 import os
+from datetime import timedelta
 
+from django.utils import timezone
 from rest_framework import generics, permissions, status, views, viewsets
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, NotFound
@@ -74,6 +76,7 @@ class CreateInviteView(generics.GenericAPIView):
             store=store,
             role=data["role"],
             invited_by=request.user,
+            expires_at=timezone.now() + timedelta(hours=data.get("expires_in_hours", 1)),
         )
 
         invite_link = f"{settings.FRONTEND_URL}/accept-invite?token={invite.token}"
@@ -248,6 +251,31 @@ class RemoveMemberView(generics.GenericAPIView):
             raise PermissionDenied("Cannot remove a store owner.")
 
         membership.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DeleteInviteView(generics.GenericAPIView):
+    """
+    DELETE /api/accounts/invites/{invite_id}/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = None
+
+    @extend_schema(responses={204: None})
+    def delete(self, request, invite_id):
+        try:
+            invite = StoreInvite.objects.get(id=invite_id)
+        except StoreInvite.DoesNotExist:
+            raise NotFound("Invite not found.")
+
+        if not StoreMembership.objects.filter(
+            user=request.user,
+            store=invite.store,
+            role__in=["owner", "admin"],
+        ).exists():
+            raise PermissionDenied("Only store owners/admins can remove invites.")
+
+        invite.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
