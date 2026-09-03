@@ -1,13 +1,18 @@
-from django.shortcuts import render
-
-# Create your views here.
+import uuid
 from rest_framework import viewsets, permissions
-from .models import Product
-from .serializers import ProductSerializer
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from .models import Product, StockReceipt, SpoilageRecord
+from .serializers import ProductSerializer, StockReceiptSerializer, SpoilageRecordSerializer
 from apps.accounts.models import StoreMembership
-from .models import StockReceipt, SpoilageRecord
-from .serializers import StockReceiptSerializer, SpoilageRecordSerializer
-from rest_framework.exceptions import PermissionDenied
+
+
+def _store_ids(user):
+    return StoreMembership.objects.filter(user=user).values_list("store_id", flat=True)
+
+
+def _assert_member(user, store):
+    if not StoreMembership.objects.filter(user=user, store=store).exists():
+        raise PermissionDenied("You are not a member of this store.")
 
 
 class ProductViewSet(viewsets.ModelViewSet):
@@ -15,48 +20,52 @@ class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # Only return products from stores the user is a member of
-        member_store_ids = StoreMembership.objects.filter(
-            user=self.request.user
-        ).values_list("store_id", flat=True)
-        return Product.objects.filter(store_id__in=member_store_ids)
+        return Product.objects.filter(store_id__in=_store_ids(self.request.user))
 
     def perform_create(self, serializer):
         store = serializer.validated_data["store"]
-        is_member = StoreMembership.objects.filter(
-            user=self.request.user, store=store
-        ).exists()
-        if not is_member:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("You are not a member of this store.")
+        _assert_member(self.request.user, store)
         serializer.save()
+
 
 class StockReceiptViewSet(viewsets.ModelViewSet):
     serializer_class = StockReceiptSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        member_store_ids = StoreMembership.objects.filter(
-            user=self.request.user
-        ).values_list("store_id", flat=True)
-        qs = StockReceipt.objects.filter(product__store_id__in=member_store_ids)
-
-        payment_status = self.request.query_params.get("payment_status")
-        if payment_status:
-            qs = qs.filter(payment_status=payment_status)
-        return qs
+        qs = StockReceipt.objects.filter(
+            product__store_id__in=_store_ids(self.request.user)
+        ).select_related("product", "received_by")
+        ps = self.request.query_params.get("payment_status")
+        if ps:
+            # accept both "Paid"/"unpaid" etc.
+            ps_map = {"Paid": "paid", "Not Paid": "unpaid", "paid": "paid", "unpaid": "unpaid"}
+            qs = qs.filter(payment_status=ps_map.get(ps, ps))
+        return qs.order_by("-created_at")
 
     def perform_create(self, serializer):
-        product = serializer.validated_data["product"]
-        is_member = StoreMembership.objects.filter(
-            user=self.request.user, store=product.store
-        ).exists()
-        if not is_member:
-            raise PermissionDenied("You are not a member of this store.")
+        product = serializer.validated_data["product_id"]
+        _assert_member(self.request.user, product.store)
 
-        receipt = serializer.save(received_by=self.request.user)
-        product.quantity += receipt.quantity_received
+        qty = serializer.validated_data["quantity_received"]
+        cost = serializer.validated_data["unit_cost"]
+
+        selling_price = serializer.validated_data.get("selling_price")
+
+        ref = "REC-" + uuid.uuid4().hex[:8].upper()
+        serializer.save(received_by=self.request.user, reference_number=ref)
+
+        product.quantity += qty
+        product.buying_price = cost
+        if selling_price is not None:
+            product.selling_price = selling_price
         product.save()
+
+    def perform_update(self, serializer):
+        """Allow admin to mark payment_status paid/unpaid."""
+        instance = self.get_object()
+        _assert_member(self.request.user, instance.product.store)
+        serializer.save()
 
 
 class SpoilageRecordViewSet(viewsets.ModelViewSet):
@@ -64,24 +73,20 @@ class SpoilageRecordViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        member_store_ids = StoreMembership.objects.filter(
-            user=self.request.user
-        ).values_list("store_id", flat=True)
-        return SpoilageRecord.objects.filter(product__store_id__in=member_store_ids)
+        return SpoilageRecord.objects.filter(
+            product__store_id__in=_store_ids(self.request.user)
+        ).select_related("product", "recorded_by").order_by("-created_at")
 
     def perform_create(self, serializer):
-        product = serializer.validated_data["product"]
-        is_member = StoreMembership.objects.filter(
-            user=self.request.user, store=product.store
-        ).exists()
-        if not is_member:
-            raise PermissionDenied("You are not a member of this store.")
+        product = serializer.validated_data["product_id"]
+        _assert_member(self.request.user, product.store)
 
-        quantity_spoiled = serializer.validated_data["quantity_spoiled"]
-        if quantity_spoiled > product.quantity:
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError("Cannot spoil more stock than currently in inventory.")
+        qty = serializer.validated_data["quantity_spoiled"]
+        if qty > product.quantity:
+            raise ValidationError(
+                {"quantity": f"Only {product.quantity} unit(s) available — cannot spoil {qty}."}
+            )
 
         serializer.save(recorded_by=self.request.user)
-        product.quantity -= quantity_spoiled
+        product.quantity -= qty
         product.save()

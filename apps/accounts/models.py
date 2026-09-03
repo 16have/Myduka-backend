@@ -83,7 +83,7 @@ class StoreInvite(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.expires_at:
-            self.expires_at = timezone.now() + timedelta(days=7)
+            self.expires_at = timezone.now() + timedelta(hours=1)
         super().save(*args, **kwargs)
 
     def is_valid(self):

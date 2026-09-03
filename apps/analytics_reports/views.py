@@ -74,9 +74,16 @@ class DashboardSummaryReportView(views.APIView):
         out_of_stock = sum(1 for p in products if p.stock_status == Product.StockStatus.OUT_OF_STOCK)
 
         from apps.supply_requests.models import SupplyRequest
+        from apps.inventory.models import StockReceipt
+
         pending_supply_requests = SupplyRequest.objects.filter(
             product__store_id__in=store_ids,
             status=SupplyRequest.Status.PENDING,
+        ).count()
+
+        unpaid_stock = StockReceipt.objects.filter(
+            product__store_id__in=store_ids,
+            payment_status="unpaid",
         ).count()
 
         return Response({
@@ -85,4 +92,5 @@ class DashboardSummaryReportView(views.APIView):
             "low_stock": low_stock,
             "out_of_stock": out_of_stock,
             "pending_supply_requests": pending_supply_requests,
+            "unpaid_stock": unpaid_stock,
         })
