@@ -80,6 +80,10 @@ class AcceptInviteSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid invite token.")
         if not invite.is_valid():
             raise serializers.ValidationError("This invite has expired or was already used.")
+        if User.objects.filter(email=invite.email).exists():
+            raise serializers.ValidationError(
+                "An account with this email already exists. Please log in instead."
+            )
         self.invite = invite
         return value
 
@@ -106,13 +110,15 @@ class AcceptInviteSerializer(serializers.Serializer):
 class StoreMemberSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source="user.id", read_only=True)
     username = serializers.CharField(source="user.username", read_only=True)
+    name = serializers.CharField(source="user.username", read_only=True)
     email = serializers.CharField(source="user.email", read_only=True)
     is_active = serializers.BooleanField(source="user.is_active", read_only=True)
     membership_id = serializers.IntegerField(source="id", read_only=True)
+    created_at = serializers.DateTimeField(source="user.date_joined", read_only=True)
 
     class Meta:
         model = StoreMembership
-        fields = ["membership_id", "id", "username", "email", "role", "is_active", "is_primary"]
+        fields = ["membership_id", "id", "username", "name", "email", "role", "is_active", "is_primary", "created_at"]
 
 class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
     def __init__(self, *args, **kwargs):
@@ -148,6 +154,7 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         data["user"] = {
             "id": user.id,
             "username": user.username,
+            "name": user.username,
             "email": user.email,
             "role": user.role,
             "is_active": user.is_active,

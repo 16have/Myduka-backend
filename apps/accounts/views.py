@@ -1,41 +1,37 @@
-from django.shortcuts import render
+import os
 
-# Create your views here.
-from rest_framework import generics, permissions, status, views
+from rest_framework import generics, permissions, status, views, viewsets
 from rest_framework.response import Response
-from .serializers import MerchantRegistrationSerializer
-from django.core.mail import send_mail
-from django.conf import settings
 from rest_framework.exceptions import PermissionDenied, NotFound
-from .models import StoreInvite, StoreMembership
-from apps.stores.models import Store
-from .serializers import CreateInviteSerializer, AcceptInviteSerializer
-from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import EmailTokenObtainPairSerializer
-from rest_framework import viewsets
-from .models import StoreMembership
-from .serializers import StoreMemberSerializer
-from apps.stores.models import Store
-from rest_framework.exceptions import NotFound
-from .models import StoreInvite
 from rest_framework.throttling import AnonRateThrottle
+from rest_framework_simplejwt.views import TokenObtainPairView
 from django.core.mail import send_mail
-from .models import PasswordResetToken
-from .serializers import RequestPasswordResetSerializer, ConfirmPasswordResetSerializer
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from .models import User
 from django.core.exceptions import ValidationError
 from django.conf import settings
 
+from .models import User, StoreInvite, StoreMembership, PasswordResetToken
+from apps.stores.models import Store
+from .serializers import (
+    MerchantRegistrationSerializer,
+    CreateInviteSerializer,
+    AcceptInviteSerializer,
+    EmailTokenObtainPairSerializer,
+    StoreMemberSerializer,
+    RequestPasswordResetSerializer,
+    ConfirmPasswordResetSerializer,
+)
+
+
 class MerchantRegistrationView(generics.GenericAPIView):
     serializer_class = MerchantRegistrationSerializer
-    permission_classes = [permissions.AllowAny]  # public — this IS the signup endpoint
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = serializer.save()
-
         return Response(
             {
                 "user": {
@@ -51,6 +47,7 @@ class MerchantRegistrationView(generics.GenericAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
 
 class CreateInviteView(generics.GenericAPIView):
     serializer_class = CreateInviteSerializer
@@ -80,6 +77,7 @@ class CreateInviteView(generics.GenericAPIView):
         )
 
         invite_link = f"{settings.FRONTEND_URL}/accept-invite?token={invite.token}"
+        invite_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/accept-invite?token={invite.token}"
         send_mail(
             subject=f"You've been invited to join {store.name} on MyDuka",
             message=(
@@ -95,8 +93,11 @@ class CreateInviteView(generics.GenericAPIView):
             {
                 "id": invite.id,
                 "email": invite.email,
+                "token": str(invite.token),
                 "store": store.name,
                 "role": invite.role,
+                "status": invite.status,
+                "created_at": invite.created_at,
                 "expires_at": invite.expires_at,
             },
             status=status.HTTP_201_CREATED,
@@ -111,7 +112,6 @@ class AcceptInviteView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = serializer.save()
-
         return Response(
             {
                 "user": {
@@ -125,21 +125,60 @@ class AcceptInviteView(generics.GenericAPIView):
             status=status.HTTP_201_CREATED,
         )
 
+
+class ValidateInviteView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        parameters=[OpenApiParameter("token", OpenApiTypes.UUID, OpenApiParameter.QUERY)],
+        responses={200: dict},
+    )
+    def get(self, request):
+        token = request.query_params.get("token")
+        if not token:
+            return Response({"detail": "Missing token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            invite = StoreInvite.objects.get(token=token)
+        except StoreInvite.DoesNotExist:
+            raise NotFound("This invitation link is invalid.")
+
+        if invite.status != StoreInvite.Status.PENDING:
+            return Response(
+                {"detail": "This invitation has already been used."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not invite.is_valid():
+            return Response(
+                {"detail": "This invitation has expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            "email": invite.email,
+            "role": invite.role,
+            "store": invite.store.name,
+        })
+
+
+class LoginRateThrottle(AnonRateThrottle):
+    scope = "login"
+
+
 class EmailTokenObtainPairView(TokenObtainPairView):
-    serializer_class = EmailTokenObtainPairSerializer  
+    serializer_class = EmailTokenObtainPairSerializer
+    throttle_classes = [LoginRateThrottle]
+
 
 class StoreMemberViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    List members (admins/clerks) of stores the requester owns/admins.
     GET /api/accounts/members/?store_id=2&role=clerk
     """
     serializer_class = StoreMemberSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(responses={200: StoreMemberSerializer})
-
     def get_queryset(self):
-        # Only stores where the requester is owner/admin
         managed_store_ids = StoreMembership.objects.filter(
             user=self.request.user, role__in=["owner", "admin"]
         ).values_list("store_id", flat=True)
@@ -154,13 +193,12 @@ class StoreMemberViewSet(viewsets.ReadOnlyModelViewSet):
         if role:
             qs = qs.filter(role=role)
 
-        return qs.exclude(role="owner")  # owners aren't "managed" — they're the manager
+        return qs.exclude(role="owner")
 
 
 class ToggleMemberActiveView(generics.GenericAPIView):
     """
     POST /api/accounts/members/{membership_id}/toggle-active/
-    Activates/deactivates the underlying User (not the membership itself).
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -189,14 +227,11 @@ class ToggleMemberActiveView(generics.GenericAPIView):
 class RemoveMemberView(generics.GenericAPIView):
     """
     DELETE /api/accounts/members/{membership_id}/
-    Removes the StoreMembership (does not delete the User account itself,
-    since they may belong to other stores).
     """
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = None
 
     @extend_schema(responses={204: None})
-
     def delete(self, request, membership_id):
         try:
             membership = StoreMembership.objects.get(id=membership_id)
@@ -221,13 +256,12 @@ class PendingInvitesView(generics.ListAPIView):
     GET /api/accounts/invites/pending/?store_id=2
     """
     permission_classes = [permissions.IsAuthenticated]
-    serializer_class = None  # response is a manually-built list, not a serializer
+    serializer_class = None
 
     @extend_schema(
         parameters=[OpenApiParameter("store_id", OpenApiTypes.INT, OpenApiParameter.QUERY)],
         responses={200: dict},
     )
-
     def list(self, request):
         managed_store_ids = StoreMembership.objects.filter(
             user=request.user, role__in=["owner", "admin"]
@@ -244,8 +278,10 @@ class PendingInvitesView(generics.ListAPIView):
             {
                 "id": inv.id,
                 "email": inv.email,
+                "token": str(inv.token),
                 "role": inv.role,
                 "store": inv.store.name,
+                "status": inv.status,
                 "created_at": inv.created_at,
                 "expires_at": inv.expires_at,
             }
@@ -304,12 +340,11 @@ class RequestPasswordResetView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"]
 
-        # Always return success, even if the email doesn't exist —
-        # prevents leaking which emails are registered (standard security practice)
         try:
             user = User.objects.get(email=email)
             reset_token = PasswordResetToken.objects.create(user=user)
             reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
+            reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/reset-password?token={reset_token.token}"
             send_mail(
                 subject="Reset your MyDuka password",
                 message=f"Click the link to reset your password: {reset_link}\n\nThis link expires in 1 hour.",

@@ -58,6 +58,7 @@ class StockReceipt(models.Model):
     )
     quantity_received = models.PositiveIntegerField()
     unit_cost = models.DecimalField(max_digits=10, decimal_places=2)
+    selling_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     supplier_name = models.CharField(max_length=200, blank=True)
     received_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stock_received"
@@ -65,6 +66,9 @@ class StockReceipt(models.Model):
     payment_status = models.CharField(
         max_length=10, choices=PaymentStatus.choices, default=PaymentStatus.UNPAID
     )
+    reference_number = models.CharField(max_length=50, blank=True)
+    notes = models.TextField(blank=True)
+    date_received = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     @property
@@ -81,6 +85,8 @@ class SpoilageRecord(models.Model):
     )
     quantity_spoiled = models.PositiveIntegerField()
     reason = models.CharField(max_length=255, blank=True)
+    notes = models.TextField(blank=True)
+    date = models.DateField(null=True, blank=True)
     recorded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="spoilage_recorded"
     )
