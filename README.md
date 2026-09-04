@@ -1,246 +1,384 @@
 # MyDuka Backend
 
-Django REST API for MyDuka — a multi-tenant shop inventory, staff, and reporting
-platform. Each **store** belongs to a **merchant**, who invites **admins** to run
-day-to-day operations, who in turn create **clerk** accounts to receive stock,
-sell stock, log spoilage, and raise supply requests. All inventory data is
-scoped to the caller's store.
+MyDuka Backend is the Django REST API for a multi-tenant retail and inventory platform. A `merchant` owns one or more stores, invites `admin` users, and those admins create `clerk` users who record stock movements, spoilage, sales, and supply requests. All inventory and reporting data is scoped to the requesting user’s store.
 
-## Stack
+## Overview
 
-- Django 6.1 / Django REST Framework
-- PostgreSQL (via `psycopg`), SQLite-free — a local Postgres container is
-  provided via `docker-compose.yml`
-- JWT auth via `djangorestframework-simplejwt`
-- API docs via `drf-spectacular` (OpenAPI 3 + Swagger UI)
+This backend is built to support:
 
-## Getting started
+- merchant-owned store management
+- admin and clerk role-based access
+- JWT authentication and authorization
+- inventory tracking for products and stock movements
+- stock received, sold, and spoiled events
+- unpaid payment tracking and payment status updates
+- reporting dashboards for inventory and store performance
+- OpenAPI/Swagger documentation
 
-### Option A — Docker (recommended)
+## Tech stack
+
+- Python 3.11+
+- Django 6.1
+- Django REST Framework
+- PostgreSQL
+- drf-spectacular for OpenAPI and Swagger UI
+- djangorestframework-simplejwt for token authentication
+- CORS support for frontend integrations
+- Docker Compose for local development and database provisioning
+
+## Project structure
+
+```text
+Myduka-backend/
+├── apps/
+│   ├── accounts/
+│   │   ├── models.py
+│   │   ├── permissions.py
+│   │   ├── serializers.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   ├── inventory/
+│   │   ├── models.py
+│   │   ├── serializers.py
+│   │   ├── urls.py
+│   │   └── views.py
+│   └── __init__.py
+├── config/
+│   ├── settings.py
+│   ├── urls.py
+│   ├── wsgi.py
+│   └── asgi.py
+├── reports/
+│   ├── services/
+│   ├── urls.py
+│   ├── views.py
+│   └── serializers.py
+├── .env.example
+├── .env
+├── Dockerfile
+├── docker-compose.yml
+├── entrypoint.sh
+├── manage.py
+├── Pipfile
+├── README.md
+├── render.yaml
+├── requirements.txt
+└── .coveragerc
+```
+
+## Prerequisites
+
+Before starting the project, ensure you have:
+
+- Python 3.11 or later
+- PostgreSQL running locally, or Docker installed for the bundled database
+- pip or pipenv
+- a terminal with access to the repository
+
+## Environment configuration
+
+The project reads configuration from environment variables using Django’s `.env` file. A starter file is provided at `.env.example`.
+
+### Example `.env` file
+
+```env
+DEBUG=True
+SECRET_KEY=replace-with-a-secure-secret
+
+# Option A: use explicit DB variables
+DB_NAME=myduka
+DB_USER=myduka_user
+DB_PASSWORD=myduka_password
+DB_HOST=localhost
+DB_PORT=5432
+
+# Option B: use a single DATABASE_URL instead
+# DATABASE_URL=postgresql://myduka_user:myduka_password@localhost:5432/myduka
+
+# Optional: allow frontend origins during local development
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+```
+
+### Environment variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `SECRET_KEY` | Yes | Django secret key for signing sessions and tokens |
+| `DEBUG` | No | Enables Django debug mode in development |
+| `DB_NAME` | No, unless using `DATABASE_URL` | PostgreSQL database name |
+| `DB_USER` | No, unless using `DATABASE_URL` | PostgreSQL user |
+| `DB_PASSWORD` | No, unless using `DATABASE_URL` | PostgreSQL password |
+| `DB_HOST` | No, unless using `DATABASE_URL` | PostgreSQL host |
+| `DB_PORT` | No, unless using `DATABASE_URL` | PostgreSQL port |
+| `DATABASE_URL` | No | Full PostgreSQL connection string; takes precedence when set |
+| `CORS_ALLOWED_ORIGINS` | No | Comma-separated frontend origins allowed by Django CORS |
+| `ALLOWED_HOSTS` | No | Extra hostnames accepted by Django |
+
+## Running the app locally
+
+### Option 1: Docker (recommended)
+
+This is the easiest path for local development because it starts both PostgreSQL and the Django app together.
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
 
-This starts Postgres (`db`) and the Django dev server (`web`) on
-`http://localhost:8001`, using the settings in `.env`. `entrypoint.sh` runs
-`migrate` automatically before the server starts, so a fresh clone is
-usable immediately after `up`.
+The project will run with:
 
-> If port 8000 or 5432 is already taken on your machine by another project,
-> remap it in `docker-compose.override.yml` (gitignored, machine-local) rather
-> than editing `docker-compose.yml` — see the `db`/`web` entries already there.
+- PostgreSQL: `localhost:5432`
+- Django API: `http://localhost:8000`
 
-### Option B — Local virtualenv
+The Docker setup uses the `web` service defined in `docker-compose.yml`, which runs the Django development server and automatically calls `python manage.py migrate` via the `entrypoint.sh` script.
+
+### Option 2: Local virtual environment
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in SECRET_KEY and DATABASE_URL (or DB_* vars)
+cp .env.example .env
 python manage.py migrate
-python manage.py runserver
+python manage.py runserver 0.0.0.0:8000
 ```
 
-By default the app connects to Postgres using `DB_NAME` / `DB_USER` /
-`DB_PASSWORD` / `DB_HOST` / `DB_PORT` (matching `docker-compose.yml`). Set
-`DATABASE_URL` instead (e.g. for a managed Postgres instance) and it takes
-priority.
+If you are not using Docker, make sure PostgreSQL is running and that your environment variables match the database you want to connect to.
 
-## Deploying to Render
+## Authentication and roles
 
-The repo ships a `render.yaml` Blueprint that provisions both the web service
-and a managed Postgres database in one shot:
+The API uses JWT authentication via Django REST Framework Simple JWT.
 
-1. Push this repo to GitHub (Render deploys from a Git remote, not a local
-   clone).
-2. In the Render dashboard: **New → Blueprint**, select the repo. Render reads
-   `render.yaml` and shows two resources to create: `myduka-db` (Postgres) and
-   `myduka-backend` (a Docker-runtime web service built from the `Dockerfile`).
-3. Render will prompt for the one `sync: false` variable declared in the
-   blueprint — `CORS_ALLOWED_ORIGINS` — set it to your deployed frontend's
-   origin(s), comma-separated (e.g. `https://myduka.vercel.app`). Everything
-   else (`SECRET_KEY`, `DEBUG=False`, `DATABASE_URL`) is wired automatically.
-4. Click **Apply**. Render builds the image, starts the container, and
-   `entrypoint.sh` runs `migrate` + `collectstatic` before `gunicorn` binds to
-   the `$PORT` Render assigns — no manual release step needed.
-5. Once live, visit `https://<your-service>.onrender.com/api/docs/` to confirm
-   the API is up, then seed a merchant using the same `manage.py shell`
-   snippet as local dev (see "Seeding a merchant" below) — run it from the
-   Render service's **Shell** tab in the dashboard.
+### User roles
 
-### What the blueprint configures under the hood
+- `merchant`: owns the store and can manage the business and team
+- `admin`: manages store operations and invites or manages clerks
+- `clerk`: records stock movement, sales, spoilage, and supply requests
 
-`config/settings.py` reads a few env vars specifically for this:
+### Authentication flow
 
-| Variable | Set by | Purpose |
-|---|---|---|
-| `RENDER_EXTERNAL_HOSTNAME` | Render (automatic) | added to `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` |
-| `DATABASE_URL` | blueprint (`fromDatabase`) | points Django at the managed Postgres instance |
-| `SECRET_KEY` | blueprint (`generateValue: true`) | unique per environment, never committed |
-| `DEBUG` | blueprint (`"False"`) | disables debug pages/stack traces in production |
-| `CORS_ALLOWED_ORIGINS` | you, after first deploy | comma-separated list appended to the default dev origins |
+1. Create a merchant user directly in the database or through a one-time seed step.
+2. Log in with `POST /api/auth/login` to get an access token.
+3. Use the token as:
 
-`SECURE_PROXY_SSL_HEADER` is set unconditionally so Django correctly detects
-HTTPS behind Render's proxy (needed for CSRF checks on `/admin/`).
+```http
+Authorization: Bearer <access_token>
+```
 
+4. Use the role-based endpoints to manage users and store operations.
 
+### Public endpoints
 
-### Seeding a merchant
+These do not require a JWT token:
 
-There is currently no public "sign up" endpoint — a merchant + store is
-created directly, then the merchant invites admins through the API:
+- `GET /api/auth/health/`
+- `POST /api/auth/login`
+- `POST /api/auth/register-admin`
+- `GET /api/auth/invitations/<token>`
+
+### Protected endpoints
+
+All other API routes require authentication.
+
+## API routes
+
+### Auth and users
+
+```text
+GET    /api/auth/health/
+POST   /api/auth/login
+POST   /api/auth/logout
+GET    /api/auth/me
+GET    /api/auth/invitations
+POST   /api/auth/invitations
+GET    /api/auth/invitations/<token>
+POST   /api/auth/register-admin
+GET    /api/auth/admins
+POST   /api/auth/admins/<user_id>/<action>
+GET    /api/auth/clerks
+POST   /api/auth/clerks/<user_id>/<action>
+```
+
+Notes:
+
+- Admins are usually invited by merchants.
+- A pending invitation is exchanged for an admin account through `register-admin`.
+- A merchant or admin can manage related users within the same store context.
+
+### Inventory
+
+```text
+GET    /api/inventory
+GET    /api/inventory/<product_id>
+GET    /api/inventory/stats
+POST   /api/stock/receive
+GET    /api/stock/received
+POST   /api/stock/sell
+GET    /api/spoilage
+POST   /api/spoilage
+GET    /api/supply-requests
+POST   /api/supply-requests
+PUT    /api/supply-requests/<request_id>
+GET    /api/payments/unpaid
+PATCH  /api/payments/<transaction_id>/status
+```
+
+These endpoints are centered on product records, receiving stock, sales, spoilage logging, supply requests, and payment tracking.
+
+### Reports
+
+```text
+GET    /api/v1/reports/inventory/
+GET    /api/v1/reports/products/
+GET    /api/v1/reports/stores/
+GET    /api/v1/reports/clerks/
+```
+
+These report endpoints compute aggregate inventory and performance data from the underlying transaction and spoilage records.
+
+## API documentation
+
+The project includes OpenAPI support and a Swagger UI dashboard.
+
+- Swagger UI: `http://localhost:8000/api/docs/`
+- Schema: `http://localhost:8000/api/schema/`
+- API index: `http://localhost:8000/api/`
+
+## Creating the first merchant and store
+
+There is no public merchant sign-up endpoint. The initial merchant and store are usually created directly in the database and then the merchant invites admins through the API.
 
 ```bash
 python manage.py shell -c "
 from apps.accounts.models import User, Store
-merchant = User.objects.create_user(email='owner@example.com', password='changeme123', name='Owner', role=User.Role.MERCHANT)
+merchant = User.objects.create_user(
+    email='owner@example.com',
+    password='changeme123',
+    name='Owner',
+    role=User.Role.MERCHANT,
+)
 store = Store.objects.create(name='My Shop', merchant=merchant)
 merchant.store = store
 merchant.save(update_fields=['store'])
+print(f'Merchant: {merchant.email}')
+print(f'Store: {store.name}')
 "
 ```
 
-From there: `POST /api/auth/login` as the merchant → `POST /api/auth/invitations`
-to invite an admin → the admin completes `POST /api/auth/register-admin` with
-the invitation token → the admin can then create clerks via `POST /api/auth/clerks`.
+After this, the flow is:
 
-## API documentation (Swagger / OpenAPI)
+1. `POST /api/auth/login` with the merchant credentials
+2. `POST /api/auth/invitations` to invite an admin
+3. The admin completes registration via `POST /api/auth/register-admin`
+4. The admin can then create clerks using the clerk management endpoint
 
-- Interactive Swagger UI: `GET /api/docs/`
-- Raw OpenAPI 3 schema: `GET /api/schema/`
-- Human-oriented endpoint index: `GET /api/`
+## Deployment on Render
 
-All endpoints except `/api/auth/login`, `/api/auth/health/`,
-`/api/auth/invitations/<token>` (lookup) and `/api/auth/register-admin` require
-a JWT: `Authorization: Bearer <access_token>` (obtained from `/api/auth/login`).
+The repository contains a `render.yaml` blueprint for deploy-on-click setup on Render.
 
-Responses from the inventory endpoints use a `{"success": bool, "data": ...}`
-(or `"message"` on error) envelope; accounts endpoints return the resource
-directly with a `{"detail": ...}` shape on error.
+### What Render config does
 
-## Running tests & coverage
+- creates a Postgres database
+- creates a Docker-based web service
+- sets `SECRET_KEY` automatically
+- sets `DEBUG=False`
+- injects `DATABASE_URL` from the database resource
+- exposes `CORS_ALLOWED_ORIGINS` as a runtime variable you can set manually
+
+### Render setup steps
+
+1. Push the repository to GitHub.
+2. In Render, choose “New” → “Blueprint” and select the repository.
+3. Render reads `render.yaml` and creates the database and web service.
+4. After the initial deployment, set `CORS_ALLOWED_ORIGINS` to your frontend domain, such as:
+
+```text
+https://myduka.vercel.app
+```
+
+5. Deploy the app and confirm the health endpoint:
+
+```text
+https://<your-service>.onrender.com/api/auth/health/
+```
+
+> The app executes `migrate` and `collectstatic` in `entrypoint.sh` before starting Gunicorn.
+
+## Running tests
+
+Use Django’s test runner:
 
 ```bash
-python manage.py test                       # 54 tests across accounts/inventory/reports
+python manage.py test
+```
+
+For coverage, use:
+
+```bash
 coverage run manage.py test
-coverage report -m                          # per-file breakdown
-coverage report --fail-under=70             # CI gate
+coverage report -m
 ```
 
-Coverage is currently **~92%** overall (`.coveragerc` excludes migrations and
-`manage.py`).
+## Data model summary
 
-## Data model
+The system centers around a store-owned inventory model:
 
-```mermaid
-erDiagram
-    STORE ||--o{ USER : employs
-    USER ||--o{ STORE : owns
-    STORE ||--o{ INVITATION : issues
-    USER ||--o{ INVITATION : sends
-    STORE ||--o{ PRODUCT : stocks
-    PRODUCT ||--|| INVENTORY : "tracked by"
-    PRODUCT ||--o{ STOCKTRANSACTION : has
-    USER ||--o{ STOCKTRANSACTION : records
-    PRODUCT ||--o{ SPOILAGERECORD : has
-    USER ||--o{ SPOILAGERECORD : records
-    PRODUCT ||--o{ SUPPLYREQUEST : has
-    USER ||--o{ SUPPLYREQUEST : requests
+- `Store` owns a business context and its users
+- `User` represents a merchant, admin, or clerk
+- `Invitation` is used to onboard people into a store
+- `Product` represents each item in the catalog
+- `StockTransaction` records stock received, stock sold, spoilage, and adjustments
+- `SpoilageRecord` tracks quantity lost or damaged
+- `SupplyRequest` records procurement requests
 
-    USER {
-        int id PK
-        string email UK
-        string name
-        string role "merchant | admin | clerk"
-        bool is_active
-        int store_id FK "nullable"
-    }
-    STORE {
-        int id PK
-        string name
-        int merchant_id FK
-        datetime created_at
-    }
-    INVITATION {
-        int id PK
-        string email
-        string token UK
-        string status "pending | used | expired"
-        int invited_by_id FK
-        int store_id FK "nullable"
-        datetime expires_at
-    }
-    PRODUCT {
-        int id PK
-        int store_id FK
-        string name
-        string category
-        decimal buying_price
-        decimal selling_price
-        int current_stock
-        int minimum_stock_level
-    }
-    INVENTORY {
-        int id PK
-        int product_id FK "one-to-one"
-        int quantity
-        int current_stock
-    }
-    STOCKTRANSACTION {
-        int id PK
-        string reference_number UK
-        int product_id FK
-        int clerk_id FK "PROTECT"
-        string transaction_type "Received | Sold | Spoiled | Adjusted"
-        int quantity
-        decimal buying_price
-        decimal selling_price
-        string payment_status "Paid | Not Paid"
-    }
-    SPOILAGERECORD {
-        int id PK
-        int product_id FK
-        int recorder_id FK "PROTECT"
-        int quantity
-        string reason "Broken | Expired | Other"
-    }
-    SUPPLYREQUEST {
-        int id PK
-        int product_id FK
-        int requester_id FK "PROTECT"
-        int quantity
-        string status "Pending | Approved | Declined | Ordered | Received"
-    }
+## Notes and current assumptions
+
+- Merchant self-registration is intentionally not exposed publicly; a merchant account is created directly in the system.
+- Inventory and reporting data is intentionally scoped to the current store so no cross-store leakage occurs.
+- Payment tracking is a store-level operational flag rather than a full external payment processor integration.
+- Reports are generated live from stock movement and spoilage data rather than a separate analytics table.
+
+## Troubleshooting
+
+### PostgreSQL connection errors
+
+Check that:
+
+- PostgreSQL is running
+- your `.env` values match the database credentials
+- the server is listening on the expected host/port
+
+### Django app does not start
+
+Run:
+
+```bash
+python manage.py check
+python manage.py migrate
 ```
 
-Notes on the schema:
+### CORS issues from the frontend
 
-- `Product.store` scopes every catalog and transaction record to one store —
-  no cross-store data is ever visible to a request.
-- `StockTransaction.clerk`, `SpoilageRecord.recorder`, and
-  `SupplyRequest.requester` use `on_delete=PROTECT`: a user who has ever
-  recorded a transaction cannot be hard-deleted, preserving the audit trail
-  (deactivate them instead via `PATCH /api/auth/.../deactivate`).
-- Reports (`/api/v1/reports/...`) are computed live from `StockTransaction`
-  and `SpoilageRecord` — there is no separate reporting/analytics table.
+Add your frontend domain to `CORS_ALLOWED_ORIGINS` in `.env`:
 
-## Architecture notes / known gaps
-
-- **No merchant self-signup endpoint.** Merchant + first store are created
-  directly (see "Seeding a merchant" above); only the admin/clerk invitation
-  flow is exposed over the API.
-- **Reports permission is `IsAuthenticated`**, not role-restricted — any
-  authenticated store member can view sales figures for their store. Consider
-  tightening to merchant/admin only if that becomes a requirement.
-- **Payment tracking is best-effort**: `payment_status` on a `StockTransaction`
-  reflects whether it's been marked paid by an admin, not an integration with
-  a real payments provider.
-
-## Project layout
-
+```env
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
-config/            settings, root URLconf, OpenAPI config, API root view
-apps/accounts/     users, stores, invitations, JWT auth, role permissions
-apps/inventory/    products, stock movements, spoilage, supply requests
-reports/           read-only reporting views computed from inventory data
-```
+
+### Docker issues
+
+If ports are already in use:
+
+- stop the process using the port, or
+- change the published host port in `docker-compose.yml`
+
+## License
+
+This project currently does not include a dedicated license file. If you intend to distribute or reuse it in a production setting, add a formal license before publication.
+
+## Contributors
+- Kelvin Tullo
+- Gabriel Ngige
+- Elias Kosh
+- Joshua Mbili
+- George Njenga
